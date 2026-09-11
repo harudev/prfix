@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { type Server } from 'http';
 import { join, dirname, isAbsolute, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
@@ -28,6 +28,13 @@ import { getFileExtension } from '../utils/fileUtils.js';
 import { FileWatcherService } from './file-watcher.js';
 import { GitDiffParser } from './git-diff.js';
 import { parseUserSettingsPatch, readUserConfig, updateUserClientSettings } from './user-config.js';
+import { AgentRegistry } from './agent-registry.js';
+import { AgentRunner, AgentRunnerError } from './agent-runner.js';
+import { countUnpushedCommits, pushHeadBranch } from './fix-pipeline.js';
+import { loadPrfixConfig } from './prfix-config.js';
+import { parseTrigger } from './trigger-parser.js';
+
+import { type AgentTask, type PrContext } from '../types/agent.js';
 
 import {
   type BaseMode,
@@ -59,6 +66,10 @@ interface ServerOptions {
   diffMode?: DiffMode;
   repoPath?: string;
   contextLines?: number;
+  /** PR head 워크트리 정보. 있어야 /fp 에이전트 수정이 동작한다. */
+  prContext?: PrContext;
+  defaultAgentRef?: string;
+  dryRun?: boolean;
 }
 
 const GENERATED_STATUS_CACHE_TTL_MS = 60_000;
@@ -119,6 +130,71 @@ function createResolvedCommentSelection(
 
 function createCommentSessionKey(selection: DiffSelection): string {
   return getDiffSelectionKey(selection);
+}
+
+interface AgentTaskPayload {
+  threadId: string;
+  instruction?: string;
+  agentRef?: string;
+  noMerge?: boolean;
+  dryRun?: boolean;
+}
+
+function parseAgentTaskPayload(body: unknown): AgentTaskPayload {
+  if (typeof body !== 'object' || body === null) {
+    throw new AgentRunnerError('Invalid agent task payload');
+  }
+
+  const candidate = body as Record<string, unknown>;
+  if (typeof candidate.threadId !== 'string' || candidate.threadId.length === 0) {
+    throw new AgentRunnerError('threadId is required');
+  }
+
+  return {
+    threadId: candidate.threadId,
+    instruction: typeof candidate.instruction === 'string' ? candidate.instruction : undefined,
+    agentRef: typeof candidate.agentRef === 'string' ? candidate.agentRef : undefined,
+    noMerge: typeof candidate.noMerge === 'boolean' ? candidate.noMerge : undefined,
+    dryRun: typeof candidate.dryRun === 'boolean' ? candidate.dryRun : undefined,
+  };
+}
+
+/** UI가 지시문을 따로 보내지 않으면 스레드의 마지막 사람 코멘트를 쓴다. */
+function lastMessageBody(messages: DiffCommentThread['messages']): string {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message.author === 'prfix') {
+      continue;
+    }
+    return parseTrigger(message.body)?.instruction ?? message.body;
+  }
+  return '';
+}
+
+/** 작업 결과를 스레드 답글 본문으로 만든다. */
+function formatTaskResult(task: AgentTask): string {
+  const shortSha = task.commitSha ? task.commitSha.slice(0, 8) : undefined;
+  const files =
+    task.changedFiles && task.changedFiles.length > 0
+      ? `\n변경 파일: ${task.changedFiles.join(', ')}`
+      : '';
+
+  switch (task.status) {
+    case 'merged':
+      return `🤖 ${task.agent.id} 수정 완료 — ${shortSha} 커밋을 head 브랜치에 머지·푸시했습니다.${files}`;
+    case 'committed':
+      return `🤖 ${task.agent.id} 수정 완료 — ${shortSha} 커밋 (브랜치 \`${task.branch}\`, 머지 보류).${files}`;
+    case 'no-change':
+      return `🤖 ${task.agent.id}: 변경할 내용이 없다고 판단했습니다.`;
+    case 'cancelled':
+      return `🤖 작업이 취소되었습니다.`;
+    case 'failed':
+      return `⚠️ ${task.agent.id} 실패: ${task.error ?? 'Unknown error'}${
+        task.worktreePath ? `\n워크트리를 남겨두었습니다: \`${task.worktreePath}\`` : ''
+      }`;
+    default:
+      return `🤖 ${task.agent.id} 작업 상태: ${task.status}`;
+  }
 }
 
 export async function startServer(
@@ -288,6 +364,112 @@ export async function startServer(
     };
     commentSessions.set(key, nextSession);
     return nextSession;
+  }
+
+  const prfixConfig = await loadPrfixConfig();
+  const agentRegistry = await AgentRegistry.load();
+  // 이미 판정한 메시지는 다시 보지 않는다. 초기 코멘트(가져온 PR 리뷰 포함)는
+  // 자동 실행 대상이 아니므로 미리 처리 완료로 표시한다.
+  const handledMessageIds = new Set<string>(
+    initialCommentThreads.flatMap((thread) => thread.messages.map((message) => message.id)),
+  );
+  const repliedTaskIds = new Set<string>();
+
+  const agentRunner = new AgentRunner({
+    registry: agentRegistry,
+    context: options.prContext,
+    defaultAgentRef: options.defaultAgentRef ?? prfixConfig.defaultAgent,
+    dryRun: options.dryRun,
+    postFixCommands: prfixConfig.postFixCommands,
+    autoPush: prfixConfig.autoPush,
+    onTaskUpdate: (task) => {
+      fileWatcher.broadcast({
+        type: 'agentTaskChanged',
+        taskId: task.id,
+        status: task.status,
+        timestamp: new Date().toISOString(),
+      });
+      maybeReplyWithResult(task);
+    },
+  });
+
+  /** 작업이 끝나면 결과를 해당 스레드에 로컬 답글로 남긴다. GitHub에는 쓰지 않는다. */
+  function maybeReplyWithResult(task: AgentTask): void {
+    const isTerminal = task.status !== 'queued' && task.status !== 'running';
+    if (!isTerminal || repliedTaskIds.has(task.id)) {
+      return;
+    }
+
+    repliedTaskIds.add(task.id);
+    appendThreadReply(currentCommentSelection, task.threadId, formatTaskResult(task));
+  }
+
+  function appendThreadReply(selection: DiffSelection, threadId: string, body: string): void {
+    const session = getOrCreateCommentSession(selection);
+    const thread = session.threads.find((candidate) => candidate.id === threadId);
+    if (!thread) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const message = {
+      id: `prfix-${randomUUID()}`,
+      body,
+      author: 'prfix',
+      createdAt: now,
+      updatedAt: now,
+    };
+    handledMessageIds.add(message.id);
+
+    updateCommentSession(
+      selection,
+      session.threads.map((candidate) =>
+        candidate.id === threadId
+          ? { ...candidate, messages: [...candidate.messages, message], updatedAt: now }
+          : candidate,
+      ),
+    );
+  }
+
+  /** 새로 달린 코멘트 중 트리거로 시작하는 것을 작업 큐에 넣는다. */
+  function processTriggers(selection: DiffSelection): void {
+    const session = getOrCreateCommentSession(selection);
+
+    for (const thread of session.threads) {
+      for (const message of thread.messages) {
+        if (handledMessageIds.has(message.id)) {
+          continue;
+        }
+        handledMessageIds.add(message.id);
+
+        const directive = parseTrigger(message.body, prfixConfig.triggerTokens);
+        if (!directive) {
+          continue;
+        }
+
+        try {
+          agentRunner.enqueue({
+            threadId: thread.id,
+            filePath: thread.filePath,
+            position: thread.position,
+            instruction: directive.instruction,
+            agentRef: directive.agentRef,
+            noMerge: directive.noMerge || !prfixConfig.autoMerge,
+            dryRun: directive.dryRun,
+          });
+        } catch (error) {
+          appendThreadReply(
+            selection,
+            thread.id,
+            `⚠️ prfix: ${
+              error instanceof AgentRunnerError || error instanceof Error
+                ? error.message
+                : 'Unknown error'
+            }`,
+          );
+        }
+      }
+    }
   }
 
   app.get('/api/diff', async (req, res) => {
@@ -748,6 +930,7 @@ export async function startServer(
         : nextThreads;
 
       updateCommentSession(selection, resolvedThreads);
+      processTriggers(selection);
 
       res.json({
         success: true,
@@ -825,6 +1008,103 @@ export async function startServer(
     } else {
       res.send('');
     }
+  });
+
+  app.get('/api/agents', (_req, res) => {
+    res.json({
+      enabled: agentRunner.enabled,
+      defaultAgent: options.defaultAgentRef ?? prfixConfig.defaultAgent,
+      triggerTokens: prfixConfig.triggerTokens,
+      autoMerge: prfixConfig.autoMerge,
+      agents: agentRegistry.list(),
+      ...(options.prContext
+        ? { headBranch: options.prContext.headBranch, worktreePath: options.prContext.repoPath }
+        : {}),
+    });
+  });
+
+  app.get('/api/agent-tasks', (_req, res) => {
+    res.json({ enabled: agentRunner.enabled, tasks: agentRunner.list() });
+  });
+
+  app.post('/api/agent-tasks', (req, res) => {
+    try {
+      const body: unknown =
+        typeof req.body === 'string' ? (JSON.parse(req.body) as unknown) : req.body;
+      const payload = parseAgentTaskPayload(body);
+      const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
+      const session = getOrCreateCommentSession(selection);
+      const thread = session.threads.find((candidate) => candidate.id === payload.threadId);
+
+      if (!thread) {
+        res.status(404).json({ error: `Thread not found: ${payload.threadId}` });
+        return;
+      }
+
+      const active = agentRunner.findActiveByThread(thread.id);
+      if (active) {
+        res
+          .status(409)
+          .json({ error: '이 스레드에 이미 진행 중인 작업이 있습니다.', task: active });
+        return;
+      }
+
+      const task = agentRunner.enqueue({
+        threadId: thread.id,
+        filePath: thread.filePath,
+        position: thread.position,
+        instruction: payload.instruction ?? lastMessageBody(thread.messages),
+        agentRef: payload.agentRef,
+        noMerge: payload.noMerge ?? !prfixConfig.autoMerge,
+        dryRun: payload.dryRun,
+      });
+
+      res.json({ success: true, task });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid agent task request';
+      res.status(error instanceof AgentRunnerError ? 400 : 500).json({ error: message });
+    }
+  });
+
+  app.get('/api/push-status', async (_req, res) => {
+    if (!options.prContext) {
+      res.json({ enabled: false, unpushed: 0 });
+      return;
+    }
+
+    try {
+      res.json({
+        enabled: true,
+        unpushed: await countUnpushedCommits(options.prContext),
+        headBranch: options.prContext.headBranch,
+        remote: options.prContext.remote,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  });
+
+  app.post('/api/push', async (_req, res) => {
+    if (!options.prContext) {
+      res.status(400).json({ error: 'PR 워크트리가 준비되지 않았습니다.' });
+      return;
+    }
+
+    try {
+      const result = await pushHeadBranch(options.prContext);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  });
+
+  app.post('/api/agent-tasks/:taskId/cancel', (req, res) => {
+    const task = agentRunner.cancel(req.params.taskId);
+    if (!task) {
+      res.status(404).json({ error: `Task not found: ${req.params.taskId}` });
+      return;
+    }
+    res.json({ success: true, task });
   });
 
   app.get('/api/user-settings', async (_req, res) => {

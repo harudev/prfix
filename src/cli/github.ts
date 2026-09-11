@@ -326,6 +326,47 @@ export function parseGitHubPrUrl(url: string): PullRequestInfo | null {
   }
 }
 
+/**
+ * `/files/<sha>` 같은 뒷부분을 떼고 PR 자체를 가리키는 URL로 만든다.
+ * gh는 범위가 붙은 링크를 받지 못한다.
+ */
+export function normalizePrUrl(url: string): string | null {
+  const info = parseGitHubPrUrl(url);
+  if (!info) {
+    return null;
+  }
+
+  return `https://${info.hostname}/${info.owner}/${info.repo}/pull/${info.pullNumber}`;
+}
+
+export interface PrMeta {
+  number: number;
+  title: string;
+  url: string;
+  headRefName: string;
+  baseRefName: string;
+  /** fork에서 올라온 PR이면 head가 origin에 없다. */
+  isCrossRepository: boolean;
+}
+
+/** 수정 커밋을 어디에 올릴지 정하려면 head 브랜치명이 필요하다. */
+export function getPrMeta(prArg: string): PrMeta {
+  try {
+    const stdout = execFileSync(
+      'gh',
+      ['pr', 'view', prArg, '--json', 'number,title,url,headRefName,baseRefName,isCrossRepository'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+
+    return JSON.parse(stdout) as PrMeta;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error('Invalid JSON returned from gh pr view');
+    }
+    throw formatGhCommandError(error);
+  }
+}
+
 export function getPrPatch(prArg: string): string {
   try {
     const patch = execFileSync('gh', ['pr', 'diff', prArg], {

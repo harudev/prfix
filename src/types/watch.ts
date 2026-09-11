@@ -38,11 +38,19 @@ interface CommentsChangedWatchEvent {
   timestamp: string;
 }
 
+interface AgentTaskChangedWatchEvent {
+  type: 'agentTaskChanged';
+  taskId: string;
+  status: string;
+  timestamp: string;
+}
+
 export type WatchEvent =
   | ConnectedWatchEvent
   | ReloadWatchEvent
   | ErrorWatchEvent
-  | CommentsChangedWatchEvent;
+  | CommentsChangedWatchEvent
+  | AgentTaskChangedWatchEvent;
 
 export interface ClientWatchState {
   isWatchEnabled: boolean;

@@ -21,7 +21,9 @@ import {
 } from '../utils/diffSelection';
 
 import { Checkbox } from './components/Checkbox';
+import { AgentTaskPanel } from './components/AgentTaskPanel';
 import { CommentsDropdown } from './components/CommentsDropdown';
+import { PushToPrButton } from './components/PushToPrButton';
 import { CommentsListModal } from './components/CommentsListModal';
 import { DiffQuickMenu } from './components/DiffQuickMenu';
 import { DiffViewer } from './components/DiffViewer';
@@ -38,6 +40,8 @@ import { useAppearanceSettings } from './hooks/useAppearanceSettings';
 import { useDiffComments } from './hooks/useDiffComments';
 import { useExpandedLines, type MergedChunk } from './hooks/useExpandedLines';
 import { useFileWatch } from './hooks/useFileWatch';
+import { useAgentTasks } from './hooks/useAgentTasks';
+import { AgentTasksProvider } from './contexts/AgentTasksContext';
 import { useKeyboardNavigation } from './hooks/useKeyboardNavigation';
 import { useLazyDiffRendering } from './hooks/useLazyDiffRendering';
 import { useViewedFiles } from './hooks/useViewedFiles';
@@ -569,10 +573,13 @@ function App() {
     }
   }, [commentsContextKey, fetchServerThreads, replaceThreads]);
 
+  const agentTasks = useAgentTasks();
+
   // File watch for reload functionality - initialize with callback
   const { shouldReload, reload, watchState } = useFileWatch(
     handleWatchReload,
     handleCommentsChanged,
+    agentTasks.refresh,
   );
 
   // Track which file the mouse is over so `v` works without a cursor
@@ -1198,410 +1205,414 @@ function App() {
     settings.editor.argsTemplate.trim() !== '';
 
   return (
-    <WordHighlightProvider>
-      <div className="h-screen flex flex-col" onClickCapture={handleGlobalClick}>
-        <header
-          className={`bg-github-bg-secondary border-b border-github-border flex ${
-            isMobile ? 'flex-col' : 'flex-row items-center'
-          }`}
-        >
-          <div
-            className={`flex items-center justify-between w-full ${
-              isMobile ? 'px-3 py-2 gap-3' : 'px-4 py-3 gap-4 w-auto'
-            } ${!isDragging ? '!transition-all !duration-300 !ease-in-out' : ''}`}
-            style={{
-              width: isMobile ? '100%' : isFileTreeOpen ? `${sidebarWidth}px` : 'auto',
-              minWidth: isMobile ? '0px' : isFileTreeOpen ? '200px' : 'auto',
-              maxWidth: isMobile ? 'none' : isFileTreeOpen ? '600px' : 'none',
-            }}
-          >
-            <h1>
-              <Logo
-                style={{
-                  height: '18px',
-                  color: 'var(--color-github-text-secondary)',
-                }}
-              />
-            </h1>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setIsFileTreeOpen(!isFileTreeOpen)}
-                className="p-2 text-github-text-secondary hover:text-github-text-primary hover:bg-github-bg-tertiary rounded transition-colors"
-                title={isFileTreeOpen ? 'Collapse file tree' : 'Expand file tree'}
-                aria-expanded={isFileTreeOpen}
-                aria-controls="file-tree-panel"
-                aria-label="Toggle file tree panel"
-              >
-                {isFileTreeOpen ? <PanelLeftClose size={18} /> : <PanelLeft size={18} />}
-              </button>
-              <button
-                onClick={() => setIsSettingsOpen(true)}
-                className="p-2 text-github-text-secondary hover:text-github-text-primary hover:bg-github-bg-tertiary rounded transition-colors"
-                title="Settings"
-              >
-                <Settings size={18} />
-              </button>
-            </div>
-          </div>
-          {!isMobile && (
-            <div
-              className={`border-r border-github-border ${!isDragging ? '!transition-all !duration-300 !ease-in-out' : ''}`}
-              style={{
-                width: isFileTreeOpen ? '4px' : '0px',
-                height: 'calc(100% - 16px)',
-                margin: '8px 0',
-                transform: 'translateX(-2px)',
-              }}
-            />
-          )}
-          <div
-            className={`flex-1 flex flex-wrap items-center justify-between ${
-              isMobile ? 'px-3 pb-2 gap-3' : 'px-4 py-3 gap-4'
+    <AgentTasksProvider value={agentTasks}>
+      <WordHighlightProvider>
+        <div className="h-screen flex flex-col" onClickCapture={handleGlobalClick}>
+          <header
+            className={`bg-github-bg-secondary border-b border-github-border flex ${
+              isMobile ? 'flex-col' : 'flex-row items-center'
             }`}
           >
-            <div className={`flex flex-wrap items-center ${isMobile ? 'gap-2' : 'gap-3'}`}>
-              {!isMobile && (
-                <div className="flex bg-github-bg-tertiary border border-github-border rounded-md p-1">
-                  <button
-                    onClick={() => handleDiffModeChange('split')}
-                    className={`px-3 py-1.5 text-xs font-medium rounded transition-all duration-200 flex items-center gap-1.5 cursor-pointer ${
-                      diffMode === 'split'
-                        ? 'bg-github-bg-primary text-github-text-primary shadow-sm'
-                        : 'text-github-text-secondary hover:text-github-text-primary'
-                    }`}
-                  >
-                    <Columns size={14} />
-                    Split
-                  </button>
-                  <button
-                    onClick={() => handleDiffModeChange('unified')}
-                    className={`px-3 py-1.5 text-xs font-medium rounded transition-all duration-200 flex items-center gap-1.5 cursor-pointer ${
-                      diffMode === 'unified'
-                        ? 'bg-github-bg-primary text-github-text-primary shadow-sm'
-                        : 'text-github-text-secondary hover:text-github-text-primary'
-                    }`}
-                  >
-                    <AlignLeft size={14} />
-                    Unified
-                  </button>
-                </div>
-              )}
-              <Checkbox
-                checked={ignoreWhitespace}
-                onChange={setIgnoreWhitespace}
-                label="Ignore Whitespace"
-                title={ignoreWhitespace ? 'Show whitespace changes' : 'Ignore whitespace changes'}
-              />
-              {/* File Watch Reload Button */}
-              <ReloadButton
-                shouldReload={shouldReload}
-                isReloading={watchState.isReloading}
-                onReload={reload}
-                changeType={watchState.lastChangeType}
-                compact={isMobile}
-              />
-            </div>
             <div
-              className={`flex flex-wrap items-center text-sm text-github-text-secondary ${
-                isMobile ? 'gap-3' : 'gap-4'
-              }`}
+              className={`flex items-center justify-between w-full ${
+                isMobile ? 'px-3 py-2 gap-3' : 'px-4 py-3 gap-4 w-auto'
+              } ${!isDragging ? '!transition-all !duration-300 !ease-in-out' : ''}`}
+              style={{
+                width: isMobile ? '100%' : isFileTreeOpen ? `${sidebarWidth}px` : 'auto',
+                minWidth: isMobile ? '0px' : isFileTreeOpen ? '200px' : 'auto',
+                maxWidth: isMobile ? 'none' : isFileTreeOpen ? '600px' : 'none',
+              }}
             >
-              {!isMobile && threads.length > 0 && (
-                <CommentsDropdown
-                  commentsCount={threads.length}
-                  isCopiedAll={isCopiedAll}
-                  onCopyAll={handleCopyAllComments}
-                  onDeleteAll={clearAllComments}
-                  onViewAll={() => setIsCommentsListOpen(true)}
-                />
-              )}
-              <div className="flex flex-col gap-1 items-center">
-                <div className="text-xs relative">
-                  {viewedFiles.size === diffData.files.length
-                    ? 'All diffs difit-ed!'
-                    : `${viewedFiles.size} / ${diffData.files.length} files viewed`}
-                  <SparkleAnimation isActive={showSparkles} />
-                </div>
-                <div
-                  className="relative h-2 bg-github-bg-tertiary rounded-full overflow-hidden"
+              <h1>
+                <Logo
                   style={{
-                    width: '90px',
-                    border: '1px solid var(--color-github-border)',
+                    height: '18px',
+                    color: 'var(--color-github-text-secondary)',
                   }}
+                />
+              </h1>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setIsFileTreeOpen(!isFileTreeOpen)}
+                  className="p-2 text-github-text-secondary hover:text-github-text-primary hover:bg-github-bg-tertiary rounded transition-colors"
+                  title={isFileTreeOpen ? 'Collapse file tree' : 'Expand file tree'}
+                  aria-expanded={isFileTreeOpen}
+                  aria-controls="file-tree-panel"
+                  aria-label="Toggle file tree panel"
                 >
-                  <div
-                    className="absolute top-0 right-0 h-full transition-all duration-300 ease-out"
-                    style={{
-                      width: `${((diffData.files.length - viewedFiles.size) / diffData.files.length) * 100}%`,
-                      backgroundColor: (() => {
-                        const remainingPercent =
-                          ((diffData.files.length - viewedFiles.size) / diffData.files.length) *
-                          100;
-                        if (remainingPercent > 50) return 'var(--color-github-accent)'; // green
-                        if (remainingPercent > 20) return 'var(--color-github-warning)'; // yellow
-                        return 'var(--color-github-danger)'; // red
-                      })(),
-                    }}
-                  />
-                </div>
+                  {isFileTreeOpen ? <PanelLeftClose size={18} /> : <PanelLeft size={18} />}
+                </button>
+                <button
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="p-2 text-github-text-secondary hover:text-github-text-primary hover:bg-github-bg-tertiary rounded transition-colors"
+                  title="Settings"
+                >
+                  <Settings size={18} />
+                </button>
               </div>
-              {revisionOptions ? (
-                <DiffQuickMenu
-                  options={revisionOptions}
-                  selection={selectedRevision}
-                  resolvedBaseRevision={resolvedBaseRevision}
-                  resolvedTargetRevision={resolvedTargetRevision}
-                  onSelectDiff={(selection) => void handleRevisionChange(selection)}
-                  onOpenAdvanced={() => setIsRevisionModalOpen(true)}
-                  compact={!isDesktop}
-                />
-              ) : (
-                <span className="text-xs">
-                  Reviewing:{' '}
-                  <code className="bg-github-bg-tertiary px-1.5 py-0.5 rounded text-xs text-github-text-primary">
-                    {diffData.commit.includes('...') ? (
-                      <>
-                        <span className="text-github-text-secondary font-medium">
-                          {diffData.commit.split('...')[0]}...
-                        </span>
-                        <span className="font-medium">{diffData.commit.split('...')[1]}</span>
-                      </>
-                    ) : (
-                      diffData.commit
-                    )}
-                  </code>
-                </span>
-              )}
             </div>
-          </div>
-        </header>
-        {revisionOptions && (
-          <RevisionDetailModal
-            key={isRevisionModalOpen ? getDiffSelectionKey(selectedRevision) : 'closed'}
-            isOpen={isRevisionModalOpen}
-            onClose={() => setIsRevisionModalOpen(false)}
-            options={revisionOptions}
-            selection={selectedRevision}
-            resolvedBaseRevision={resolvedBaseRevision}
-            resolvedTargetRevision={resolvedTargetRevision}
-            onApply={(selection) => void handleRevisionChange(selection)}
-          />
-        )}
-
-        {isMobile && isFileTreeOpen && (
-          <button
-            type="button"
-            aria-label="Close file tree"
-            className="fixed inset-0 bg-black/40 z-30"
-            onClick={() => setIsFileTreeOpen(false)}
-          />
-        )}
-
-        <div className="flex flex-1 overflow-hidden relative">
-          <div
-            className={`relative overflow-hidden ${!isDragging ? '!transition-all !duration-300 !ease-in-out' : ''}`}
-            style={{
-              width: isMobile ? '0px' : isFileTreeOpen ? `${sidebarWidth}px` : '0px',
-            }}
-          >
-            <aside
-              id="file-tree-panel"
-              className={`bg-github-bg-secondary overflow-y-auto flex flex-col ${
-                isMobile
-                  ? 'fixed inset-y-0 right-0 z-40 w-[min(85vw,360px)] border-l border-github-border transition-transform duration-300 ease-out'
-                  : 'relative border-r border-github-border'
+            {!isMobile && (
+              <div
+                className={`border-r border-github-border ${!isDragging ? '!transition-all !duration-300 !ease-in-out' : ''}`}
+                style={{
+                  width: isFileTreeOpen ? '4px' : '0px',
+                  height: 'calc(100% - 16px)',
+                  margin: '8px 0',
+                  transform: 'translateX(-2px)',
+                }}
+              />
+            )}
+            <div
+              className={`flex-1 flex flex-wrap items-center justify-between ${
+                isMobile ? 'px-3 pb-2 gap-3' : 'px-4 py-3 gap-4'
               }`}
-              style={{
-                width: isMobile ? 'min(85vw, 360px)' : `${sidebarWidth}px`,
-                minWidth: isMobile ? '0px' : '200px',
-                maxWidth: isMobile ? 'none' : '600px',
-                height: '100%',
-                transform: isMobile
-                  ? isFileTreeOpen
-                    ? 'translateX(0)'
-                    : 'translateX(100%)'
-                  : undefined,
-              }}
             >
-              <div className="flex-1 overflow-y-auto">
-                <FileList
-                  files={diffData.files}
-                  onScrollToFile={scrollFileIntoDiffContainer}
-                  onFileSelected={isMobile ? handleMobileFileSelected : undefined}
-                  comments={normalizedThreads}
-                  reviewedFiles={viewedFiles}
-                  onToggleReviewed={toggleFileReviewed}
-                  onToggleFolderReviewed={toggleFolderReviewed}
-                  selectedFileIndex={cursor?.fileIndex ?? null}
+              <div className={`flex flex-wrap items-center ${isMobile ? 'gap-2' : 'gap-3'}`}>
+                {!isMobile && (
+                  <div className="flex bg-github-bg-tertiary border border-github-border rounded-md p-1">
+                    <button
+                      onClick={() => handleDiffModeChange('split')}
+                      className={`px-3 py-1.5 text-xs font-medium rounded transition-all duration-200 flex items-center gap-1.5 cursor-pointer ${
+                        diffMode === 'split'
+                          ? 'bg-github-bg-primary text-github-text-primary shadow-sm'
+                          : 'text-github-text-secondary hover:text-github-text-primary'
+                      }`}
+                    >
+                      <Columns size={14} />
+                      Split
+                    </button>
+                    <button
+                      onClick={() => handleDiffModeChange('unified')}
+                      className={`px-3 py-1.5 text-xs font-medium rounded transition-all duration-200 flex items-center gap-1.5 cursor-pointer ${
+                        diffMode === 'unified'
+                          ? 'bg-github-bg-primary text-github-text-primary shadow-sm'
+                          : 'text-github-text-secondary hover:text-github-text-primary'
+                      }`}
+                    >
+                      <AlignLeft size={14} />
+                      Unified
+                    </button>
+                  </div>
+                )}
+                <Checkbox
+                  checked={ignoreWhitespace}
+                  onChange={setIgnoreWhitespace}
+                  label="Ignore Whitespace"
+                  title={ignoreWhitespace ? 'Show whitespace changes' : 'Ignore whitespace changes'}
+                />
+                {/* File Watch Reload Button */}
+                <ReloadButton
+                  shouldReload={shouldReload}
+                  isReloading={watchState.isReloading}
+                  onReload={reload}
+                  changeType={watchState.lastChangeType}
+                  compact={isMobile}
                 />
               </div>
-              {!isMobile && (
-                <div className="p-4 border-t border-github-border flex justify-between items-center">
-                  <button
-                    onClick={() => setIsHelpOpen(true)}
-                    className="flex items-center gap-1.5 text-github-text-secondary hover:text-github-text-primary transition-colors"
-                    title="Keyboard shortcuts (Shift+?)"
+              <div
+                className={`flex flex-wrap items-center text-sm text-github-text-secondary ${
+                  isMobile ? 'gap-3' : 'gap-4'
+                }`}
+              >
+                <PushToPrButton />
+                <AgentTaskPanel />
+                {!isMobile && threads.length > 0 && (
+                  <CommentsDropdown
+                    commentsCount={threads.length}
+                    isCopiedAll={isCopiedAll}
+                    onCopyAll={handleCopyAllComments}
+                    onDeleteAll={clearAllComments}
+                    onViewAll={() => setIsCommentsListOpen(true)}
+                  />
+                )}
+                <div className="flex flex-col gap-1 items-center">
+                  <div className="text-xs relative">
+                    {viewedFiles.size === diffData.files.length
+                      ? 'All diffs difit-ed!'
+                      : `${viewedFiles.size} / ${diffData.files.length} files viewed`}
+                    <SparkleAnimation isActive={showSparkles} />
+                  </div>
+                  <div
+                    className="relative h-2 bg-github-bg-tertiary rounded-full overflow-hidden"
+                    style={{
+                      width: '90px',
+                      border: '1px solid var(--color-github-border)',
+                    }}
                   >
-                    <Keyboard size={16} />
-                    <span className="text-sm">Shortcuts</span>
-                  </button>
-                  <a
-                    href="https://github.com/yoshiko-pg/difit"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-github-text-secondary hover:text-github-text-primary transition-colors"
-                    title="View on GitHub"
-                  >
-                    <span className="text-sm">Star on GitHub</span>
-                    <GitHubIcon style={{ height: '18px', width: '18px' }} />
-                  </a>
+                    <div
+                      className="absolute top-0 right-0 h-full transition-all duration-300 ease-out"
+                      style={{
+                        width: `${((diffData.files.length - viewedFiles.size) / diffData.files.length) * 100}%`,
+                        backgroundColor: (() => {
+                          const remainingPercent =
+                            ((diffData.files.length - viewedFiles.size) / diffData.files.length) *
+                            100;
+                          if (remainingPercent > 50) return 'var(--color-github-accent)'; // green
+                          if (remainingPercent > 20) return 'var(--color-github-warning)'; // yellow
+                          return 'var(--color-github-danger)'; // red
+                        })(),
+                      }}
+                    />
+                  </div>
                 </div>
-              )}
-            </aside>
-          </div>
-
-          {!isMobile && (
-            <div
-              className={`bg-github-border hover:bg-github-text-muted cursor-col-resize ${!isDragging ? '!transition-all !duration-300 !ease-in-out' : ''}`}
-              style={{
-                width: isFileTreeOpen ? '4px' : '0px',
-              }}
-              onMouseDown={handleMouseDown}
-              title="Drag to resize file list"
+                {revisionOptions ? (
+                  <DiffQuickMenu
+                    options={revisionOptions}
+                    selection={selectedRevision}
+                    resolvedBaseRevision={resolvedBaseRevision}
+                    resolvedTargetRevision={resolvedTargetRevision}
+                    onSelectDiff={(selection) => void handleRevisionChange(selection)}
+                    onOpenAdvanced={() => setIsRevisionModalOpen(true)}
+                    compact={!isDesktop}
+                  />
+                ) : (
+                  <span className="text-xs">
+                    Reviewing:{' '}
+                    <code className="bg-github-bg-tertiary px-1.5 py-0.5 rounded text-xs text-github-text-primary">
+                      {diffData.commit.includes('...') ? (
+                        <>
+                          <span className="text-github-text-secondary font-medium">
+                            {diffData.commit.split('...')[0]}...
+                          </span>
+                          <span className="font-medium">{diffData.commit.split('...')[1]}</span>
+                        </>
+                      ) : (
+                        diffData.commit
+                      )}
+                    </code>
+                  </span>
+                )}
+              </div>
+            </div>
+          </header>
+          {revisionOptions && (
+            <RevisionDetailModal
+              key={isRevisionModalOpen ? getDiffSelectionKey(selectedRevision) : 'closed'}
+              isOpen={isRevisionModalOpen}
+              onClose={() => setIsRevisionModalOpen(false)}
+              options={revisionOptions}
+              selection={selectedRevision}
+              resolvedBaseRevision={resolvedBaseRevision}
+              resolvedTargetRevision={resolvedTargetRevision}
+              onApply={(selection) => void handleRevisionChange(selection)}
             />
           )}
 
-          <main
-            ref={diffScrollContainerRef}
-            className={`flex-1 overflow-y-auto ${showMobileCommentsBar ? 'pb-16' : ''}`}
-          >
-            {diffData.files.map((file, fileIndex) => {
-              const fileThreads = threadsByFile.get(file.path) ?? EMPTY_COMMENT_THREADS;
-              const mergedChunks =
-                getMergedChunksForVersion(mergedChunksState, diffDataVersion, file.path) ??
-                EMPTY_MERGED_CHUNKS;
-              const isRendered = renderedFilePaths.has(file.path);
-              return (
-                <div
-                  key={file.path}
-                  id={getFileElementId(file.path)}
-                  data-file-path={file.path}
-                  data-rendered={isRendered ? 'true' : 'false'}
-                  ref={(node) => registerLazyFileContainer(file.path, node)}
-                  className="mb-6"
-                  onMouseEnter={() => {
-                    hoveredFileIndexRef.current = fileIndex;
-                  }}
-                  onMouseLeave={() => {
-                    if (hoveredFileIndexRef.current === fileIndex) {
-                      hoveredFileIndexRef.current = null;
-                    }
-                  }}
-                >
-                  {isRendered ? (
-                    <DiffViewer
-                      file={file}
-                      threads={fileThreads}
-                      showAuthorBadges={showAuthorBadges}
-                      diffMode={diffMode}
-                      reviewedFiles={viewedFiles}
-                      isChangedSinceViewed={changedSinceViewedFiles.has(file.path)}
-                      onToggleReviewed={handleViewedButtonToggle}
-                      collapsedFiles={collapsedFiles}
-                      onToggleCollapsed={toggleFileCollapsed}
-                      onToggleAllCollapsed={toggleAllFilesCollapsed}
-                      onAddComment={handleAddComment}
-                      onGenerateThreadPrompt={handleGenerateThreadPrompt}
-                      onRemoveThread={removeThread}
-                      onReplyToThread={handleReplyToThread}
-                      onRemoveMessage={removeMessage}
-                      onUpdateMessage={updateMessage}
-                      onOpenInEditor={canOpenInEditor ? handleOpenInEditor : undefined}
-                      syntaxTheme={settings.syntaxTheme}
-                      baseCommitish={diffData.baseCommitish}
-                      targetCommitish={diffData.targetCommitish}
-                      cursor={cursor?.fileIndex === fileIndex ? cursor : null}
-                      isFocused={cursor?.fileIndex === fileIndex}
-                      fileIndex={fileIndex}
-                      onLineClick={handleLineClick}
-                      commentTrigger={
-                        commentTrigger?.fileIndex === fileIndex ? commentTrigger : null
-                      }
-                      onCommentTriggerHandled={handleCommentTriggerHandled}
-                      mergedChunks={mergedChunks}
-                      expandLines={expandLines}
-                      expandAllBetweenChunks={expandAllBetweenChunks}
-                      prefetchFileContent={prefetchFileContent}
-                      isExpandLoading={isExpandLoading}
-                      diffVersion={diffDataVersion}
-                    />
-                  ) : (
-                    <div className="bg-github-bg-secondary border border-github-border rounded-md px-4 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-xs uppercase tracking-wide text-github-text-muted">
-                            Deferred Rendering
-                          </div>
-                          <div className="text-sm font-mono text-github-text-primary truncate">
-                            {file.path}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => ensureFileRendered(file.path)}
-                          className="px-3 py-1.5 text-xs rounded border border-github-border text-github-text-secondary hover:text-github-text-primary hover:bg-github-bg-tertiary"
-                        >
-                          Load now
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </main>
-        </div>
-
-        {showMobileCommentsBar && (
-          <div className="fixed bottom-0 left-0 right-0 z-20 bg-github-bg-secondary border-t border-github-border px-4 py-2 flex justify-end">
-            <CommentsDropdown
-              commentsCount={threads.length}
-              isCopiedAll={isCopiedAll}
-              onCopyAll={handleCopyAllComments}
-              onDeleteAll={clearAllComments}
-              onViewAll={() => setIsCommentsListOpen(true)}
-              direction="up"
-              compact
+          {isMobile && isFileTreeOpen && (
+            <button
+              type="button"
+              aria-label="Close file tree"
+              className="fixed inset-0 bg-black/40 z-30"
+              onClick={() => setIsFileTreeOpen(false)}
             />
+          )}
+
+          <div className="flex flex-1 overflow-hidden relative">
+            <div
+              className={`relative overflow-hidden ${!isDragging ? '!transition-all !duration-300 !ease-in-out' : ''}`}
+              style={{
+                width: isMobile ? '0px' : isFileTreeOpen ? `${sidebarWidth}px` : '0px',
+              }}
+            >
+              <aside
+                id="file-tree-panel"
+                className={`bg-github-bg-secondary overflow-y-auto flex flex-col ${
+                  isMobile
+                    ? 'fixed inset-y-0 right-0 z-40 w-[min(85vw,360px)] border-l border-github-border transition-transform duration-300 ease-out'
+                    : 'relative border-r border-github-border'
+                }`}
+                style={{
+                  width: isMobile ? 'min(85vw, 360px)' : `${sidebarWidth}px`,
+                  minWidth: isMobile ? '0px' : '200px',
+                  maxWidth: isMobile ? 'none' : '600px',
+                  height: '100%',
+                  transform: isMobile
+                    ? isFileTreeOpen
+                      ? 'translateX(0)'
+                      : 'translateX(100%)'
+                    : undefined,
+                }}
+              >
+                <div className="flex-1 overflow-y-auto">
+                  <FileList
+                    files={diffData.files}
+                    onScrollToFile={scrollFileIntoDiffContainer}
+                    onFileSelected={isMobile ? handleMobileFileSelected : undefined}
+                    comments={normalizedThreads}
+                    reviewedFiles={viewedFiles}
+                    onToggleReviewed={toggleFileReviewed}
+                    onToggleFolderReviewed={toggleFolderReviewed}
+                    selectedFileIndex={cursor?.fileIndex ?? null}
+                  />
+                </div>
+                {!isMobile && (
+                  <div className="p-4 border-t border-github-border flex justify-between items-center">
+                    <button
+                      onClick={() => setIsHelpOpen(true)}
+                      className="flex items-center gap-1.5 text-github-text-secondary hover:text-github-text-primary transition-colors"
+                      title="Keyboard shortcuts (Shift+?)"
+                    >
+                      <Keyboard size={16} />
+                      <span className="text-sm">Shortcuts</span>
+                    </button>
+                    <a
+                      href="https://github.com/yoshiko-pg/difit"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 text-github-text-secondary hover:text-github-text-primary transition-colors"
+                      title="View on GitHub"
+                    >
+                      <span className="text-sm">Star on GitHub</span>
+                      <GitHubIcon style={{ height: '18px', width: '18px' }} />
+                    </a>
+                  </div>
+                )}
+              </aside>
+            </div>
+
+            {!isMobile && (
+              <div
+                className={`bg-github-border hover:bg-github-text-muted cursor-col-resize ${!isDragging ? '!transition-all !duration-300 !ease-in-out' : ''}`}
+                style={{
+                  width: isFileTreeOpen ? '4px' : '0px',
+                }}
+                onMouseDown={handleMouseDown}
+                title="Drag to resize file list"
+              />
+            )}
+
+            <main
+              ref={diffScrollContainerRef}
+              className={`flex-1 overflow-y-auto ${showMobileCommentsBar ? 'pb-16' : ''}`}
+            >
+              {diffData.files.map((file, fileIndex) => {
+                const fileThreads = threadsByFile.get(file.path) ?? EMPTY_COMMENT_THREADS;
+                const mergedChunks =
+                  getMergedChunksForVersion(mergedChunksState, diffDataVersion, file.path) ??
+                  EMPTY_MERGED_CHUNKS;
+                const isRendered = renderedFilePaths.has(file.path);
+                return (
+                  <div
+                    key={file.path}
+                    id={getFileElementId(file.path)}
+                    data-file-path={file.path}
+                    data-rendered={isRendered ? 'true' : 'false'}
+                    ref={(node) => registerLazyFileContainer(file.path, node)}
+                    className="mb-6"
+                    onMouseEnter={() => {
+                      hoveredFileIndexRef.current = fileIndex;
+                    }}
+                    onMouseLeave={() => {
+                      if (hoveredFileIndexRef.current === fileIndex) {
+                        hoveredFileIndexRef.current = null;
+                      }
+                    }}
+                  >
+                    {isRendered ? (
+                      <DiffViewer
+                        file={file}
+                        threads={fileThreads}
+                        showAuthorBadges={showAuthorBadges}
+                        diffMode={diffMode}
+                        reviewedFiles={viewedFiles}
+                        isChangedSinceViewed={changedSinceViewedFiles.has(file.path)}
+                        onToggleReviewed={handleViewedButtonToggle}
+                        collapsedFiles={collapsedFiles}
+                        onToggleCollapsed={toggleFileCollapsed}
+                        onToggleAllCollapsed={toggleAllFilesCollapsed}
+                        onAddComment={handleAddComment}
+                        onGenerateThreadPrompt={handleGenerateThreadPrompt}
+                        onRemoveThread={removeThread}
+                        onReplyToThread={handleReplyToThread}
+                        onRemoveMessage={removeMessage}
+                        onUpdateMessage={updateMessage}
+                        onOpenInEditor={canOpenInEditor ? handleOpenInEditor : undefined}
+                        syntaxTheme={settings.syntaxTheme}
+                        baseCommitish={diffData.baseCommitish}
+                        targetCommitish={diffData.targetCommitish}
+                        cursor={cursor?.fileIndex === fileIndex ? cursor : null}
+                        isFocused={cursor?.fileIndex === fileIndex}
+                        fileIndex={fileIndex}
+                        onLineClick={handleLineClick}
+                        commentTrigger={
+                          commentTrigger?.fileIndex === fileIndex ? commentTrigger : null
+                        }
+                        onCommentTriggerHandled={handleCommentTriggerHandled}
+                        mergedChunks={mergedChunks}
+                        expandLines={expandLines}
+                        expandAllBetweenChunks={expandAllBetweenChunks}
+                        prefetchFileContent={prefetchFileContent}
+                        isExpandLoading={isExpandLoading}
+                        diffVersion={diffDataVersion}
+                      />
+                    ) : (
+                      <div className="bg-github-bg-secondary border border-github-border rounded-md px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-xs uppercase tracking-wide text-github-text-muted">
+                              Deferred Rendering
+                            </div>
+                            <div className="text-sm font-mono text-github-text-primary truncate">
+                              {file.path}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => ensureFileRendered(file.path)}
+                            className="px-3 py-1.5 text-xs rounded border border-github-border text-github-text-secondary hover:text-github-text-primary hover:bg-github-bg-tertiary"
+                          >
+                            Load now
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </main>
           </div>
-        )}
 
-        {isSettingsOpen && (
-          <SettingsModal
-            isOpen={isSettingsOpen}
-            onClose={() => setIsSettingsOpen(false)}
-            settings={settings}
-            onSettingsChange={updateSettings}
+          {showMobileCommentsBar && (
+            <div className="fixed bottom-0 left-0 right-0 z-20 bg-github-bg-secondary border-t border-github-border px-4 py-2 flex justify-end">
+              <CommentsDropdown
+                commentsCount={threads.length}
+                isCopiedAll={isCopiedAll}
+                onCopyAll={handleCopyAllComments}
+                onDeleteAll={clearAllComments}
+                onViewAll={() => setIsCommentsListOpen(true)}
+                direction="up"
+                compact
+              />
+            </div>
+          )}
+
+          {isSettingsOpen && (
+            <SettingsModal
+              isOpen={isSettingsOpen}
+              onClose={() => setIsSettingsOpen(false)}
+              settings={settings}
+              onSettingsChange={updateSettings}
+            />
+          )}
+
+          <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+
+          <CommentsListModal
+            isOpen={isCommentsListOpen}
+            onClose={() => setIsCommentsListOpen(false)}
+            onNavigate={handleNavigateToComment}
+            comments={normalizedThreads}
+            showAuthorBadges={showAuthorBadges}
+            onRemoveThread={removeThread}
+            onGenerateThreadPrompt={handleGenerateThreadPrompt}
+            onReplyToThread={handleReplyToThread}
+            onRemoveMessage={removeMessage}
+            onUpdateMessage={updateMessage}
+            syntaxTheme={settings.syntaxTheme}
           />
-        )}
-
-        <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
-
-        <CommentsListModal
-          isOpen={isCommentsListOpen}
-          onClose={() => setIsCommentsListOpen(false)}
-          onNavigate={handleNavigateToComment}
-          comments={normalizedThreads}
-          showAuthorBadges={showAuthorBadges}
-          onRemoveThread={removeThread}
-          onGenerateThreadPrompt={handleGenerateThreadPrompt}
-          onReplyToThread={handleReplyToThread}
-          onRemoveMessage={removeMessage}
-          onUpdateMessage={updateMessage}
-          syntaxTheme={settings.syntaxTheme}
-        />
-      </div>
-    </WordHighlightProvider>
+        </div>
+      </WordHighlightProvider>
+    </AgentTasksProvider>
   );
 }
 

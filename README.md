@@ -1,285 +1,217 @@
-<h1 align="center">
-  <img src="public/logo.png" alt="difit" width="260">
-</h1>
+# prfix
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/difit"><img src="https://img.shields.io/npm/v/difit.svg" alt="npm version"></a>
-  <a href="https://github.com/yoshiko-pg/difit/actions/workflows/pr.yml"><img src="https://github.com/yoshiko-pg/difit/actions/workflows/pr.yml/badge.svg" alt="CI"></a>
-</p>
+PR diff를 로컬에서 GitHub처럼 보고, 코드 라인에 코멘트를 달면 지정한 에이전트가 워크트리에서 고쳐 커밋·머지까지 끝내는 리뷰 툴.
 
-<p align="center">
-  English | <a href="./README.ja.md">日本語</a> | <a href="./README.zh.md">简体中文</a> | <a href="./README.ko.md">한국어</a>
-</p>
+[difit](https://github.com/yoshiko-pg/difit) (MIT) 포크. diff 뷰어·코멘트 UI·PR 로딩은 difit 것을 그대로 쓰고, `/fp` 트리거 → 에이전트 실행 → git 파이프라인 → 상태 UI를 얹었다. 업스트림 문서는 `README.ja.md` / `README.ko.md` / `README.zh.md`에 그대로 남아 있다.
 
-![difit screenshot](docs/images/screenshot.png)
+## 필요한 것
 
-**difit** is a CLI tool that lets you view and review local git diffs with a GitHub-style viewer. In addition to clean visuals, comments can be copied as prompts for AI. The local code review tool for the AI era!
+| 도구                                                      | 용도                                           |
+| --------------------------------------------------------- | ---------------------------------------------- |
+| `gh` (인증 완료)                                          | PR diff·메타데이터 조회                        |
+| `git`                                                     | 워크트리, 커밋, 머지, 푸시                     |
+| [`grove`](https://github.com/miridih/cp-grove-cli) (선택) | PR 워크트리 생성. 없으면 `git worktree`로 대체 |
+| `claude` / `codex`                                        | 실제로 코드를 고치는 에이전트                  |
 
-## ⚡ Quick Start
-
-Try it first
+Node 21+, pnpm.
 
 ```bash
-npx difit  # View the latest commit diff in WebUI
-```
-
-Install and use
-
-```bash
-npm install -g difit
-difit  # View the latest commit diff in WebUI
-```
-
-Enable use from AI agents
-
-```bash
-npx skills add yoshiko-pg/difit # Add the Skills to your agent
-```
-
-Installed skills include:
-
-- `difit`: ask the user for a review in the difit viewer when the user explicitly opts in to difit
-- `difit-review`: review a specific diff or PR and show the findings inside the difit viewer, when the user explicitly asks for difit
-
-## 🚀 Usage
-
-### Basic Usage
-
-```bash
-difit <target>                    # View single commit diff
-difit <target> [compare-with]     # Compare two commits/branches
-```
-
-### Single commit review
-
-```bash
-difit          # HEAD (latest) commit
-difit 6f4a9b7  # Specific commit
-difit feature  # Latest commit on feature branch
-```
-
-### Compare two commits
-
-```bash
-difit @ main         # Compare with main branch (@ is alias for HEAD)
-difit feature main   # Compare branches
-difit . origin/main  # Compare working directory with remote main
-```
-
-### Special Arguments
-
-difit supports special keywords for common diff scenarios:
-
-```bash
-difit .        # All uncommitted changes (staging area + unstaged)
-difit staged   # Staging area changes
-difit working  # Unstaged changes only
-```
-
-### GitHub PR
-
-```bash
-difit --pr https://github.com/owner/repo/pull/123
-```
-
-`--pr` mode fetches patches by running `gh pr diff --patch` under the hood.
-It also imports unresolved inline review threads from the PR so they appear as startup comments in difit.
-
-Authentication is handled by GitHub CLI:
-
-1. **Login once** (recommended): `gh auth login`
-2. **Token-based auth** (CI/non-interactive): set `GH_TOKEN` or `GITHUB_TOKEN`
-
-#### GitHub Enterprise Server
-
-For Enterprise Server PRs, authenticate GitHub CLI against your Enterprise host:
-
-1. `gh auth login --hostname YOUR-ENTERPRISE-SERVER`
-2. Or set `GH_HOST=YOUR-ENTERPRISE-SERVER` with `GH_TOKEN`/`GITHUB_TOKEN`
-
-### Initial Comments
-
-You can inject initial review comments when launching difit:
-
-```bash
-difit --comment '{"type":"thread","filePath":"src/example.ts","position":{"side":"new","line":10},"body":"The background for this change is..."}'
-```
-
-`--comment` is repeatable and accepts either a single JSON object or a JSON array. Supported types:
-
-- `thread`: create a new thread at the specified diff position
-- `reply`: add a reply to the latest existing thread at the same diff position
-
-If the same comment already exists, difit skips importing it.
-
-### Stdin
-
-By using a pipe to pass unified diffs via stdin, you can view diffs from any tool with difit.
-
-```bash
-# View diffs from other tools
-diff -u file1.txt file2.txt | difit
-
-# Review saved patches
-cat changes.patch | difit
-
-# Compare against merge base
-git diff --merge-base main feature | difit
-
-# Review an entire existing file as newly added
-git diff -- /dev/null path/to/file | difit
-
-# Explicit stdin mode
-git diff --cached | difit -
-```
-
-Stdin mode is selected with intent-first rules:
-
-- `-` explicitly enables stdin mode
-- If positional arguments (`<target>` / `[compare-with]`) or `--pr` are provided, difit treats the command as Git/PR mode and does not auto-read stdin
-- Auto stdin detection applies only when no explicit mode is selected and stdin is a pipe/file/socket
-
-## ⚙️ CLI Options
-
-| Flag                  | Default         | Description                                                                                             |
-| --------------------- | --------------- | ------------------------------------------------------------------------------------------------------- |
-| `<target>`            | HEAD            | Commit hash, tag, HEAD~n, branch, or special arguments                                                  |
-| `[compare-with]`      | -               | Optional second commit to compare with (shows diff between the two)                                     |
-| `--merge-base`        | false           | Resolve the base revision with `git merge-base` before diffing (Git revision mode only)                 |
-| `--pr <url>`          | -               | GitHub PR URL to review (e.g., https://github.com/owner/repo/pull/123)                                  |
-| `--comment <json>`    | -               | Inject initial comments (repeatable; accepts a JSON object or array)                                    |
-| `--port`              | 4966            | Preferred port; falls back to +1 if occupied                                                            |
-| `--host`              | 127.0.0.1       | Host address to bind server to (use 0.0.0.0 for external access)                                        |
-| `--no-open`           | false           | Don't automatically open browser                                                                        |
-| `--clean`             | false           | Clear all existing comments and viewed files on startup                                                 |
-| `--include-untracked` | false           | Automatically include untracked files in diff (only with `.` or `working`)                              |
-| `--keep-alive`        | false           | Keep server running after browser disconnects (stop manually with Ctrl+C)                               |
-| `--background`        | false           | Keep the server running in the background and output JSON connection info                               |
-| `--context <lines>`   | git default (3) | Limit surrounding context lines per change (`0` shows changes only; not available with `--pr` or stdin) |
-
-## 💬 Comment System
-
-difit includes a review comment system that makes it easy to provide feedback to AI coding agents:
-
-1. **Add Comments**: Click the comment button on any diff line or drag to select a range
-2. **Edit Comments**: Edit existing comments with the edit button
-3. **Generate Prompts**: Comments include a "Copy Prompt" button that formats the context for AI coding agents
-4. **Copy All**: Use "Copy All Prompt" to copy all comments in a structured format
-5. **Persistent Storage**: Comments are saved in browser localStorage per commit
-
-### Comment Prompt Format
-
-```sh
-src/components/Button.tsx:L42   # This line is automatically added
-Make this variable name more descriptive
-```
-
-For range selections:
-
-```sh
-src/components/Button.tsx:L42-L48   # This line is automatically added
-This section is unnecessary
-```
-
-## 🤖 Calling from Agents
-
-You can install the following Skills to work with difit from AI agents.
-
-```sh
-npx skills add yoshiko-pg/difit
-```
-
-Installed skills include:
-
-- `difit`: ask the user for a review in the difit viewer when the user explicitly opts in to difit
-- `difit-review`: review a specific diff or PR and show the findings inside the difit viewer, when the user explicitly asks for difit
-
-After code edits or automated review, the agent can start the difit server with the appropriate skill.
-
-## 🎨 Syntax Highlighting Languages
-
-- **JavaScript/TypeScript**: `.js`, `.jsx`, `.ts`, `.tsx`, `.svelte`
-- **Web Technologies**: HTML, CSS, JSON, XML, Markdown
-- **Shell Scripts**: `.sh`, `.bash`, `.zsh`, `.fish`
-- **Backend Languages**: PHP, SQL, Ruby, Java, Groovy, Scala, Perl, Elixir, Haskell, Clojure
-- **Systems Languages**: C, C++, C#, Rust, Go
-- **Mobile Languages**: Swift, Kotlin, Dart
-- **Infrastructure as Code**: Terraform (HCL), Nix
-- **Others**: Python, Protobuf, YAML, Solidity, Vim script, GDScript
-
-## 🔍 Auto-collapsed Files
-
-difit automatically identifies and collapses certain files to keep your view clean:
-
-- **Deleted files**: Removed files are auto-collapsed since they don't require close review
-- **Generated files**: Auto-generated code is collapsed by default. This includes:
-  - Lock files (`package-lock.json`, `go.sum`, `Cargo.lock`, `Gemfile.lock`, etc.)
-  - Minified files (`*.min.js`, `*.min.css`)
-  - Source maps (`*.map`)
-  - Generated code:
-    - Orval (`*.msw.ts`, `*.zod.ts`, `*.api.ts`)
-    - Dart (`*.g.dart`, `*.freezed.dart`)
-    - C# (`*.g.cs`, `*.designer.cs`)
-    - Protobuf (`*.pb.go`, `*.pb.cc`, `*.pb.h`)
-  - Frameworks:
-    - Ruby on Rails (`db/schema.rb`)
-    - Laravel (`_ide_helper.php`)
-    - Gradle (`gradle.lockfile`)
-    - Python (`uv.lock`, `pdm.lock`)
-  - Generic generated files (`*.generated.cs`, `*.generated.ts`, `*.generated.js`)
-  - Content-based detection:
-    - Files containing `@generated` marker
-    - Files containing `DO NOT EDIT` header
-    - Language-specific generated headers (Go, Python, etc.)
-
-## 🛠️ Development
-
-```bash
-# Install dependencies
 pnpm install
-
-# Start development server (with hot reload)
-# This runs both Vite dev server and CLI with NODE_ENV=development
-pnpm run dev
-
-# Build and start production server
-pnpm run start <target>
-
-# Build for production
-pnpm run build
-
-# Run tests
-pnpm test
-
-# Run typecheck, lint, and format
-pnpm run check
-pnpm run format
+pnpm build
+node dist/cli/index.js --pr https://github.com/owner/repo/pull/123
 ```
 
-### Development Workflow
+## 사용법
 
-- **`pnpm run dev`**: Starts both Vite dev server (with hot reload) and CLI server simultaneously
-- **`pnpm run start <target>`**: Builds everything and starts production server (for testing final build)
-- **Development mode**: Uses Vite's dev server for hot reload and fast development
-- **Production mode**: Serves built static files (used by npx and production builds)
+로컬 클론 안에서 실행한다.
 
-## 🏗️ Architecture
+```bash
+prfix --pr https://github.com/owner/repo/pull/123
+```
 
-- **CLI**: Commander.js for argument parsing with comprehensive validation
-- **Backend**: Express server with simple-git for diff processing
-- **GitHub Integration**: GitHub CLI (`gh pr diff --patch`) for PR patch retrieval
-- **Frontend**: React 18 + TypeScript + Vite
-- **Styling**: Tailwind CSS v4 with GitHub-like dark theme
-- **Syntax Highlighting**: Prism.js with dynamic language loading
-- **Testing**: Vitest for unit tests with co-located test files
-- **Quality**: oxlint, oxfmt, lefthook pre-commit hooks
+1. `gh pr diff`로 PR diff를 읽어 브라우저에 띄운다
+2. PR head 브랜치 워크트리를 확보한다 — `grove init <PR URL>`, 없으면 `git worktree add`
+3. 코드 라인에 코멘트를 달고, 본문을 `/fp`로 시작하면 에이전트가 수정에 들어간다
 
-## 📋 Requirements
+```
+/fp --agent claude@opus5
+이 조건문 early return으로 바꿔줘
+```
 
-- Node.js ≥ 21.0.0
-- Git repository with commits to review
-- GitHub CLI (`gh`) for `--pr` mode
+코멘트 입력창의 **🤖 Fix with agent** 버튼을 쓰면 트리거 줄이 자동으로 붙는다.
 
-## 📄 License
+### 트리거 문법
 
-MIT
+```
+/fp [--agent <provider>@<model>] [--no-merge] [--dry-run]
+<지시문>
+```
+
+| 플래그          | 뜻                                                |
+| --------------- | ------------------------------------------------- |
+| `--agent`, `-a` | 이 작업을 처리할 에이전트. 생략하면 설정의 기본값 |
+| `--no-merge`    | 커밋까지만 하고 fp 브랜치·워크트리를 남긴다       |
+| `--dry-run`     | 에이전트 대신 스텁을 돌려 파이프라인만 검증한다   |
+
+`/fix-pr`도 alias로 인식한다.
+
+### 작업이 하는 일
+
+코멘트 스레드 하나가 작업 하나다.
+
+1. `origin/<head>`에서 `fp/<head>/<taskId>` 브랜치로 워크트리 생성
+2. 파일·라인·코드·코멘트를 담은 프롬프트로 에이전트 실행 (지적 범위만 수정, 커밋 금지)
+3. 변경이 없으면 `no-change`로 끝내고 워크트리 정리
+4. 변경이 있으면 **스레드당 1커밋**
+
+   ```
+   fix(review): <지시문 첫 줄>
+
+   thread: <threadId>
+   file: <path>:<line>
+   agent: <provider>@<model>
+   ```
+
+5. 리뷰 워크트리의 **로컬** head 브랜치에 `merge --no-ff`
+6. fp 워크트리·브랜치 정리, 결과를 스레드에 로컬 답글로 남김
+
+작업 큐는 **직렬**이다. 모두 같은 head 브랜치에 머지하므로 병렬로 돌리면 충돌이 난다.
+
+실패하면 워크트리와 브랜치를 남기고 상태를 `failed`로 둔다. 해당 워크트리에서 이어서 손보면 된다. 머지 충돌도 같다 — 머지를 되돌리고 수정 커밋은 `fp/...` 브랜치에 남긴다.
+
+### push는 사용자가 한 번에
+
+작업은 **로컬 head 브랜치까지만** 반영한다. 리모트로 올리는 시점은 헤더의 **⬆ Push (N)** 버튼을 누를 때 하나뿐이다. N은 `origin/<head>`보다 앞선 커밋 수다.
+
+그래서 여러 코멘트를 연달아 처리하고 diff로 결과를 확인한 뒤, 마음에 들 때 한 번에 PR에 올릴 수 있다. 작업마다 바로 올리려면 설정에서 `autoPush`를 켠다.
+
+### diff는 로컬 git에서 나온다
+
+PR diff를 `gh pr diff` 스냅샷으로 한 번 받아오는 게 아니라, 리뷰 워크트리에서 `merge-base(origin/<base>, HEAD)..HEAD`로 계산한다. 그래서 에이전트가 커밋하면 파일 워처가 이를 감지해 **Refresh 버튼**이 뜨고, 누르면 수정 결과가 바로 diff에 반영된다.
+
+워크트리를 준비하지 못했을 때만 `gh pr diff` 스냅샷으로 물러난다 (이 경우 `/fp`도 비활성).
+
+### 링크에 담긴 범위만 보기
+
+GitHub에서 "Changes from" 드롭다운이나 커밋을 눌러 나온 URL을 그대로 넘기면, 그 범위만 로컬에서 계산해 띄운다.
+
+| 링크                       | 로컬 diff                               | `/fp`  |
+| -------------------------- | --------------------------------------- | ------ |
+| `/pull/N`, `/pull/N/files` | `merge-base(origin/<base>, HEAD)..HEAD` | 가능   |
+| `/pull/N/files/<sha>`      | `<sha>..HEAD` (그 커밋 이후의 변경)     | 가능   |
+| `/pull/N/files/<a>..<b>`   | `<a>..<b>`                              | 비활성 |
+| `/pull/N/commits/<sha>`    | `<sha>^..<sha>` (그 커밋 하나)          | 비활성 |
+
+target이 head tip이 아니면 화면의 라인 번호가 head와 어긋나 엉뚱한 줄을 고칠 수 있으므로 `/fp`를 막는다. 파일 워처도 그때는 꺼진다.
+
+링크의 SHA가 로컬에 없으면 `refs/pull/<N>/head`로 받아온다. force-push로 사라진 커밋도 대체로 이걸로 잡힌다.
+
+### GitHub에 쓰지 않는다
+
+prfix는 GitHub을 **읽기만** 한다 (PR 메타데이터, 기존 리뷰 코멘트 가져오기). 로컬 코멘트도, `/fp` 처리 결과도 PR에 코멘트로 올리지 않는다. PR에 드러나는 것은 Push 버튼으로 올린 커밋뿐이다.
+
+Fork에서 올라온 PR은 head 브랜치가 origin에 없어 지원하지 않는다.
+
+## CLI 옵션 (prfix 추가분)
+
+| 옵션            | 설명                                              |
+| --------------- | ------------------------------------------------- |
+| `--agent <ref>` | 이 세션의 기본 에이전트                           |
+| `--dry-run`     | 모든 `/fp` 작업을 스텁으로 실행                   |
+| `--no-worktree` | 워크트리 준비를 건너뛴다 (에이전트 수정 비활성화) |
+
+나머지 옵션은 difit과 같다.
+
+## 설정
+
+### `~/.config/prfix/config.json`
+
+```json
+{
+  "defaultAgent": "claude@opus5",
+  "triggerTokens": ["/fp", "/fix-pr"],
+  "postFixCommands": ["pnpm lint --fix"],
+  "autoMerge": true,
+  "autoPush": false
+}
+```
+
+| 키          | 뜻                                                                       |
+| ----------- | ------------------------------------------------------------------------ |
+| `autoMerge` | `false`면 작업이 커밋까지만 하고 로컬 head 머지도 사용자가 직접 한다     |
+| `autoPush`  | `true`면 작업마다 바로 `origin`에 push한다. 기본은 Push 버튼으로 한 번에 |
+
+### `~/.config/prfix/agents.json`
+
+provider 단위로 실행 커맨드를 덮어쓴다. `{{MODEL}}`은 해석된 모델명으로 치환되고, `{{PROMPT}}`가 있으면 프롬프트를 인자로, 없으면 stdin으로 넘긴다.
+
+```json
+{
+  "providers": {
+    "codex": {
+      "command": "codex",
+      "args": ["exec", "-m", "{{MODEL}}", "-s", "workspace-write", "--approve-for-me"],
+      "suggestedModels": ["astro6", "sol6"]
+    }
+  }
+}
+```
+
+모델 이름은 alias 테이블에 없으면 그대로 CLI에 넘어간다. 새 모델이 나와도 코드를 고칠 필요가 없다.
+
+기본 매핑:
+
+| ref                  | 실행                                                                             |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `claude@opus5`       | `claude -p --model opus --permission-mode acceptEdits`                           |
+| `claude@sonnet5`     | `claude -p --model sonnet ...`                                                   |
+| `codex@astro6`       | `codex exec -m astro6 -s workspace-write --approve-for-me --skip-git-repo-check` |
+| `<provider>@default` | 모델 플래그를 빼고 CLI 자체 기본 모델을 쓴다                                     |
+
+## API
+
+difit API에 더해:
+
+| 메서드 | 경로                              | 용도                                                       |
+| ------ | --------------------------------- | ---------------------------------------------------------- |
+| GET    | `/api/agents`                     | 에이전트 목록·기본값·트리거 토큰                           |
+| GET    | `/api/agent-tasks`                | 작업 목록·상태                                             |
+| POST   | `/api/agent-tasks`                | `{ threadId, agentRef?, instruction?, noMerge?, dryRun? }` |
+| POST   | `/api/agent-tasks/:taskId/cancel` | 취소                                                       |
+| GET    | `/api/push-status`                | `origin/<head>` 대비 안 올라간 커밋 수                     |
+| POST   | `/api/push`                       | head 브랜치를 push                                         |
+
+진행 상황은 기존 `/api/watch` SSE에 `agentTaskChanged` 이벤트로 흐른다.
+
+## 개발
+
+```bash
+pnpm test          # vitest
+pnpm check         # oxlint (type-aware)
+pnpm format:fix    # oxfmt
+pnpm build
+```
+
+prfix가 추가한 파일:
+
+```
+src/cli/worktree.ts             grove/git 워크트리 확보
+src/cli/pr-range.ts             PR 링크의 비교 범위 파싱
+src/server/trigger-parser.ts    /fp 파싱
+src/server/agent-registry.ts    provider@model → 실행 커맨드
+src/server/agent-runner.ts      직렬 작업 큐
+src/server/fix-pipeline.ts      워크트리·커밋·머지·푸시·정리
+src/server/prfix-config.ts      설정 로더
+src/client/hooks/useAgentTasks.ts
+src/client/contexts/AgentTasksContext.tsx
+src/client/components/AgentTaskBadge.tsx
+src/client/components/AgentTaskPanel.tsx
+src/client/components/PushToPrButton.tsx
+```
+
+업스트림 difit을 따라가려면:
+
+```bash
+git fetch upstream
+git rebase upstream/main
+```

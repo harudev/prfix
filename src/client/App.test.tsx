@@ -718,8 +718,11 @@ describe('App Component - Diff Mode Persistence', () => {
     fireEvent.click(refreshButton);
 
     await waitFor(() => {
-      // 4 calls: initial /api/diff, /api/revisions, initial /api/comments sync, and refresh /api/diff
-      expect(mockGlobalFetch).toHaveBeenCalledTimes(4);
+      // 2 calls to /api/diff: the initial load and the refresh
+      const diffCalls = mockGlobalFetch.mock.calls.filter(([input]) =>
+        String(input).includes('/api/diff'),
+      );
+      expect(diffCalls).toHaveLength(2);
     });
 
     await waitFor(() => {

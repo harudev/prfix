@@ -2,9 +2,11 @@ import { Check, ChevronDown, ChevronRight, Copy, Edit2, MessageSquare, Trash2 } 
 import React, { useEffect, useRef, useState } from 'react';
 
 import { type CommentThread, type DiffCommentMessage } from '../../types/diff';
+import { useAgentTasksContext } from '../contexts/AgentTasksContext';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { copyTextToClipboard } from '../utils/clipboard';
 
+import { AgentTaskBadge } from './AgentTaskBadge';
 import { CommentBodyRenderer } from './CommentBodyRenderer';
 import { CommentForm } from './CommentForm';
 import type { AppearanceSettings } from './SettingsModal';
@@ -215,6 +217,8 @@ export function CommentThreadCard({
   const [isCopied, setIsCopied] = useState(false);
   const [isReplying, setIsReplying] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const agentTasks = useAgentTasksContext();
+  const agentTask = agentTasks?.taskByThread(thread.id);
   const lineLabel = Array.isArray(thread.line)
     ? `${thread.line[0]}-${thread.line[1]}`
     : thread.line;
@@ -268,6 +272,12 @@ export function CommentThreadCard({
           >
             {thread.file}:{lineLabel}
           </span>
+          {agentTask && (
+            <AgentTaskBadge
+              task={agentTask}
+              onCancel={(taskId) => void agentTasks?.cancel(taskId)}
+            />
+          )}
           {thread.isOutdated && (
             <span
               className="inline-flex h-5 shrink-0 items-center rounded-full border border-github-text-muted px-2 text-[10px] font-medium text-github-text-muted"
